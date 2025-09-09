@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Edit PastaTimers</title>
+    <link rel="stylesheet" href="style.css" />
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/11.8.1/firebase-app.js";
+      import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.8.1/firebase-analytics.js";
+      import {
+        getFirestore,
+        doc,
+        getDoc,
+        setDoc,
+      } from "https://www.gstatic.com/firebasejs/11.8.1/firebase-firestore.js";
+      import {
+        getAuth,
+        GoogleAuthProvider,
+        signInWithPopup,
+        signOut,
+        onAuthStateChanged,
+      } from "https://www.gstatic.com/firebasejs/11.8.1/firebase-auth.js";
+
+      const firebaseConfig = {
+        apiKey: "AIzaSyDwCr7eaBZ9LS-ZAiE6cjpAlg4txN7ares",
+        authDomain: "pastatimer-25.firebaseapp.com",
+        projectId: "pastatimer-25",
+        storageBucket: "pastatimer-25.firebasestorage.app",
+        messagingSenderId: "889344281638",
+        appId: "1:889344281638:web:883c830c9bc55753d1aae7",
+        measurementId: "G-DBSR4R4B0Y",
+      };
+
+      const app = initializeApp(firebaseConfig);
+      const analytics = getAnalytics(app);
+      const db = getFirestore(app);
+      const auth = getAuth(app);
+
+      const loginBtn = document.getElementById("loginBtn");
+      const logoutBtn = document.getElementById("logoutBtn");
+
+      loginBtn.onclick = () => {
+        const provider = new GoogleAuthProvider();
+        signInWithPopup(auth, provider);
+      };
+
+      logoutBtn.onclick = () => {
+        signOut(auth).then(() => {
+          if (document.referrer && document.referrer !== window.location.href) {
+            window.location.href = document.referrer;
+          } else {
+            window.location.href = "index.html";
+          }
+        });
+      };
+
+      onAuthStateChanged(auth, async (user) => {
+        if (user) {
+          loginBtn.style.display = "none";
+          logoutBtn.style.display = "inline-block";
+          await loadTimers();
+        } else {
+          loginBtn.style.display = "inline-block";
+          logoutBtn.style.display = "none";
+          await loadTimers();
+          document.querySelectorAll("input[data-pasta]").forEach((input) => {
+            input.readOnly = true;
+          });
+        }
+      });
+
+      async function saveUserTimers(userId, data) {
+        await setDoc(doc(db, "user_timers", userId), data);
+      }
+
+      async function loadUserTimers(userId) {
+        const snap = await getDoc(doc(db, "user_timers", userId));
+        return snap.exists() ? snap.data() : null;
+      }
+
+      const defaultPastaMap = {
+        spaghetti: 9,
+        penne: 11,
+        fusilli: 10,
+        farfalle: 8,
+      };
+
+      const pastaTable = document.createElement("table");
+
+      function renderTable(data) {
+        pastaTable.innerHTML = `<tr><th>Pasta Type</th><th>Minutes</th></tr>`;
+        const sortedKeys = Object.keys(data).sort((a, b) =>
+          a.localeCompare(b, undefined, { sensitivity: "base" })
+        );
+        for (const key of sortedKeys) {
+          const time = data[key];
+          const row = document.createElement("tr");
+          row.innerHTML = `
+            <td>
+              <img src="images/${key.toLowerCase()}.svg" alt="${key}" style="width:32px;vertical-align:middle;margin-right:8px;">
+              ${key.charAt(0).toUpperCase() + key.slice(1)}
+            </td>
+            <td>
+              <input type="number" step="1" min="1" value="${time}" data-pasta="${key}" />
+            </td>
+          `;
+          pastaTable.appendChild(row);
+        }
+      }
+
+      async function loadTimers() {
+        const user = auth.currentUser;
+        let data = null;
+        if (user) {
+          data = await loadUserTimers(user.uid);
+          if (!data || Object.keys(data).length === 0) {
+            const docRef = doc(db, "timers", "pasta");
+            const snap = await getDoc(docRef);
+            data = snap.exists() ? snap.data() : defaultPastaMap;
+          }
+        } else {
+          const docRef = doc(db, "timers", "pasta");
+          const snap = await getDoc(docRef);
+          data = snap.exists() ? snap.data() : defaultPastaMap;
+        }
+        renderTable(data);
+      }
+
+      async function saveTimers() {
+        const inputs = document.querySelectorAll("input[data-pasta]");
+        const updated = {};
+        let invalid = false;
+
+        inputs.forEach((input) => {
+          const pasta = input.dataset.pasta;
+          const value = parseFloat(input.value);
+
+          if (isNaN(value) || value <= 0) {
+            invalid = true;
+          } else {
+            updated[pasta] = value;
+          }
+        });
+
+        if (invalid) {
+          alert(
+            "Please enter valid cooking times (greater than 0 minutes) for all pastas."
+          );
+          return;
+        }
+
+        const user = auth.currentUser;
+        if (!user) {
+          alert("You must be logged in to save your pasta times!");
+          return;
+        }
+        await saveUserTimers(user.uid, updated);
+
+        localStorage.setItem("pastaTimersUpdated", "1");
+
+        alert("Saved!");
+        await loadTimers();
+
+        if (document.referrer && document.referrer !== window.location.href) {
+          window.location.href = document.referrer;
+        } else {
+          window.location.href = "index.html";
+        }
+      }
+
+      window.onload = async () => {
+        document.getElementById("table-holder").appendChild(pastaTable);
+        await loadTimers();
+        document.getElementById("saveBtn").onclick = saveTimers;
+      };
+
+      async function fetchPastaKeys(userId) {
+        let url;
+        if (userId) {
+          url = `https://firestore.googleapis.com/v1/projects/pastatimer-25/databases/(default)/documents/user_timers/${userId}`;
+        } else {
+          url =
+            "https://firestore.googleapis.com/v1/projects/pastatimer-25/databases/(default)/documents/timers/pasta";
+        }
+        const res = await fetch(url);
+        const json = await res.json();
+        const fields = json.fields || {};
+        return Object.keys(fields);
+      }
+
+      async function populateDropdown(userId) {
+        const dropdown = document.getElementById("pastaDropdown");
+        if (!dropdown) return;
+        dropdown.innerHTML = `<option value="">Timers</option>`;
+        let keys = await fetchPastaKeys(userId);
+        keys = keys.sort((a, b) =>
+          a.localeCompare(b, undefined, { sensitivity: "base" })
+        );
+        keys.forEach((key) => {
+          const opt = document.createElement("option");
+          opt.value = key.toLowerCase();
+          opt.textContent = key.charAt(0).toUpperCase() + key.slice(1);
+          dropdown.appendChild(opt);
+        });
+        dropdown.onchange = function () {
+          if (this.value) {
+            window.location.href = `index.html?timer=${this.value}`;
+          }
+        };
+      }
+
+      window.addEventListener("DOMContentLoaded", () => {
+        if (window.firebase && window.firebase.auth) {
+          window.firebase.auth().onAuthStateChanged((user) => {
+            populateDropdown(user ? user.uid : null);
+          });
+        } else {
+          populateDropdown(null);
+        }
+      });
+    </script>
+  </head>
+  <body>
+    <header>
+      <a href="#" onclick="history.back(); return false;" class="logo"
+        >🍝 PastaTimer</a
+      >
+      <select id="pastaDropdown">
+        <option value="">Timers</option>
+      </select>
+      <div class="auth-buttons">
+        <button id="loginBtn" class="buttons">Login</button>
+        <button id="logoutBtn" class="buttons" style="display: none">
+          Logout
+        </button>
+      </div>
+    </header>
+
+    <main class="editor-container">
+      <h2>Edit Pasta Timers</h2>
+      <p class="subtitle" id="subtitle">
+        Customize your pasta cooking times below. Your preferences will be saved
+        to your account and available on any device.
+      </p>
+
+      <div id="table-holder"></div>
+
+      <div id="loginAndSave">
+        <button onclick="history.back(); return false;" class="buttons">
+          ← Timer
+        </button>
+        <button id="saveBtn" class="buttons">✓ Save</button>
+      </div>
+    </main>
+
+    <footer>
+      <p>Custom pasta times are stored in the cloud ☁️</p>
+    </footer>
+  </body>
+</html>
